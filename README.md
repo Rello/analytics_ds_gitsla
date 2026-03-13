@@ -1,4 +1,6 @@
-Analytics - GitHub Community SLAs
+# Analytics Datasource 
+
+GitHub Community SLAs
 
 ## Maintainers
 - [Marcel Scherello](https://github.com/rello) (author, project leader)
