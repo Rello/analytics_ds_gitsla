@@ -17,6 +17,11 @@ class GithubCommunitySla implements IDatasource, IReportTemplateProvider {
 	private const CACHE_TTL_SECONDS = 60;
 	private const TIMELINE_BATCH_SIZE = 20;
 	private const NEEDS_TRIAGE_LABEL = '0. Needs triage';
+	private const DEFAULT_EXCLUDED_AUTHORS = [
+		'dependabot',
+		'backportbot',
+		'nextcloud-command',
+	];
 
 	private LoggerInterface $logger;
 	private IL10N $l10n;
@@ -61,7 +66,7 @@ class GithubCommunitySla implements IDatasource, IReportTemplateProvider {
 		$template[] = [
 			'id' => 'exclude',
 			'name' => $this->l10n->t('Exclude authors'),
-			'placeholder' => 'user1,user2'
+			'placeholder' => 'user1,user2 (+ default bot exclusions)'
 		];
 		$template[] = [
 			'id' => 'sla',
@@ -129,8 +134,7 @@ class GithubCommunitySla implements IDatasource, IReportTemplateProvider {
 		}
 
 		$repositories = isset($option['repo']) && $option['repo'] !== '' ? array_map('trim', explode(',', $option['repo'])) : [];
-		$excludedAuthors = isset($option['exclude']) && $option['exclude'] !== '' ? array_map('trim', explode(',', $option['exclude'])) : [];
-		$excludedAuthorLookup = array_fill_keys($excludedAuthors, true);
+		$excludedAuthorLookup = $this->buildExcludedAuthorLookup($option['exclude'] ?? '');
 		$slaDays = isset($option['sla']) && (int)$option['sla'] > 0 ? (int)$option['sla'] : 14;
 		$daysFilter = isset($option['days']) && (int)$option['days'] > 0 ? (int)$option['days'] : 30;
 		$sinceDate = date(DATE_ATOM, time() - ($daysFilter * 86400));
@@ -215,7 +219,7 @@ GRAPHQL;
 							continue;
 						}
 						$issueAuthor = $issue['author']['login'] ?? null;
-						if ($issueAuthor !== null && isset($excludedAuthorLookup[$issueAuthor])) {
+						if ($issueAuthor !== null && isset($excludedAuthorLookup[$this->normalizeAuthorLogin($issueAuthor)])) {
 							continue;
 						}
 						$completedAt = $this->findNeedsTriageUnlabeledAt($issue['timelineItems']['nodes']);
@@ -302,7 +306,7 @@ GRAPHQL;
 						}
 						$pageHasRecent = true;
 						$prAuthor = $pr['author']['login'] ?? null;
-						if ($prAuthor !== null && isset($excludedAuthorLookup[$prAuthor])) {
+						if ($prAuthor !== null && isset($excludedAuthorLookup[$this->normalizeAuthorLogin($prAuthor)])) {
 							continue;
 						}
 						$completedAt = $pr['mergedAt'] ?? $pr['closedAt'] ?? '';
@@ -438,6 +442,27 @@ GRAPHQL;
 			'rawdata' => $curlResult,
 			'error' => 'HTTP response code: ' . $httpCode,
 		];
+	}
+
+	/**
+	 * @return array<string, true>
+	 */
+	private function buildExcludedAuthorLookup(string $excludeOption): array {
+		$excludedAuthors = self::DEFAULT_EXCLUDED_AUTHORS;
+		if ($excludeOption !== '') {
+			$excludedAuthors = array_merge($excludedAuthors, explode(',', $excludeOption));
+		}
+
+		$excludedAuthors = array_filter(array_map(
+			fn (string $author): string => $this->normalizeAuthorLogin($author),
+			$excludedAuthors
+		));
+
+		return array_fill_keys($excludedAuthors, true);
+	}
+
+	private function normalizeAuthorLogin(string $author): string {
+		return strtolower(trim($author));
 	}
 
 	private function toTimestamp(string $date): int {
